@@ -24,14 +24,6 @@ parser.add_argument('--use_cuda', type=bool, default=True, help='whether to use 
 opt = parser.parse_args()
 print(opt)
 
-def load_classes(path):
-    """
-    Loads class labels at 'path'
-    """
-    fp = open(path, "r")
-    names = fp.read().split("\n")[0]
-    return names
-
 cuda = torch.cuda.is_available() and opt.use_cuda
 
 os.makedirs('output', exist_ok=True)
