@@ -63,29 +63,25 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, dampening=0, weight_decay=decay)
 
-data_iter = iter(dataloader)
-_, label , img = next(data_iter)
-print(label,img)
+for epoch in range(opt.epochs):
+    for batch_i, (_, imgs, targets) in enumerate(dataloader):
+        imgs = Variable(imgs.type(Tensor))
+        targets = Variable(targets.type(Tensor), requires_grad=False)
 
-# for epoch in range(opt.epochs):
-#     for batch_i, (_, imgs, targets) in enumerate(dataloader):
-#         imgs = Variable(imgs.type(Tensor))
-#         targets = Variable(targets.type(Tensor), requires_grad=False)
-#
-#         optimizer.zero_grad()
-#
-#         loss = model(imgs, targets)
-#
-#         loss.backward()
-#         optimizer.step()
-#
-#         print('[Epoch %d/%d, Batch %d/%d] [Losses: x %f, y %f, w %f, h %f, conf %f, cls %f, total %f, recall: %.5f]' %
-#                                     (epoch, opt.epochs, batch_i, len(dataloader),
-#                                     model.losses['x'], model.losses['y'], model.losses['w'],
-#                                     model.losses['h'], model.losses['conf'], model.losses['cls'],
-#                                     loss.item(), model.losses['recall']))
-#
-#         model.seen += imgs.size(0)
-#
-#     if epoch % opt.checkpoint_interval == 0:
-#         model.save_weights('%s/%d.weights' % (opt.checkpoint_dir, epoch))
+        optimizer.zero_grad()
+
+        loss = model(imgs, targets)
+
+        loss.backward()
+        optimizer.step()
+
+        print('[Epoch %d/%d, Batch %d/%d] [Losses: x %f, y %f, w %f, h %f, conf %f, cls %f, total %f, recall: %.5f]' %
+                                    (epoch, opt.epochs, batch_i, len(dataloader),
+                                    model.losses['x'], model.losses['y'], model.losses['w'],
+                                    model.losses['h'], model.losses['conf'], model.losses['cls'],
+                                    loss.item(), model.losses['recall']))
+
+        model.seen += imgs.size(0)
+
+    if epoch % opt.checkpoint_interval == 0:
+        model.save_weights('%s/%d.weights' % (opt.checkpoint_dir, epoch))
