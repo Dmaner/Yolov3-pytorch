@@ -26,7 +26,7 @@ def read_cfg(cfgfile):
 def create_modules(module_defs):
     """
         Constructs module list of layer blocks from module configuration in module_defs
-        """
+    """
     hyperparams = module_defs.pop(0)
     output_filters = [int(hyperparams['channels'])]
     module_list = nn.ModuleList()
@@ -82,7 +82,7 @@ def create_modules(module_defs):
 
 class EmptyLayer(nn.Module):
     """
-    为shortcut layer / route layer 准备, 具体功能不在此实现
+    prepare for shortcut layer / route layer
     """
     def __init__(self):
         super(EmptyLayer, self).__init__()
@@ -306,9 +306,7 @@ class Darknet(nn.Module):
         fp.close()
 
 # model = Darknet('config/yolov3.cfg')
-# # model = Darknet("cfg/yolov3.cfg")
 # input = torch.sigmoid(torch.rand(1, 3, 416, 416).float())
-# # # 网络输入数据大小
 # # model.net_info["height"] = 416
 # predictions = model(input)
 # print(predictions.shape)
