@@ -108,12 +108,14 @@ class YOLOLayer(nn.Module):
         stride = self.img_size/grid_size
         self.device = torch.device('cuda' if prediction.is_cuda else 'cpu')
 
-        anchors = [(a[0] / stride, a[1] / stride) for a in self.anchors]
+        scale_anchors = [(a[0] / stride, a[1] / stride) for a in self.anchors]
 
         # I don't know the usage of contiguous()
-        prediction = prediction.view(batch_size, self.num_anchors*self.bbox_attrs, grid_size*grid_size)
-        prediction = prediction.transpose(1,2).contiguous()
-        prediction = prediction.view(batch_size, grid_size * grid_size * self.num_anchors, self.bbox_attrs)
+        prediction = prediction.view(batch_size,
+                                     self.num_anchors,
+                                     self.bbox_attrs,
+                                     grid_size,
+                                     grid_size).permute(0, 1, 3, 4, 2).contiguous()
 
         # Get outputs
         Centerx = torch.sigmoid(prediction[..., 0])  # Center x
@@ -123,6 +125,10 @@ class YOLOLayer(nn.Module):
         conf = torch.sigmoid(prediction[..., 4])  # Conf
         pred_cls = torch.sigmoid(prediction[..., 5:])  # Cls pred.
 
+        prediction = prediction.view(batch_size,
+                                     self.num_anchors*grid_size*grid_size,
+                                     self.bbox_attrs)
+
         # Add center offset
         grid_len = np.arange(grid_size)
         a,b = np.meshgrid(grid_len,grid_len)
@@ -131,25 +137,25 @@ class YOLOLayer(nn.Module):
         y_offset = torch.FloatTensor(b).view(-1, 1).to(self.device)
 
         x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1, self.num_anchors).view(-1, 2).unsqueeze(0)
-        prediction[:, :, :2] += x_y_offset
+        prediction[..., :2] += x_y_offset
 
         # log space transform height and the width
-        anchors = torch.FloatTensor(anchors).to(self.device)
+        anchors = torch.FloatTensor(scale_anchors).to(self.device)
 
         anchors = anchors.repeat(grid_size * grid_size, 1).unsqueeze(0)
-        prediction[:, :, 2:4] = torch.exp(prediction[:, :, 2:4]) * anchors
+        prediction[..., 2:4] = torch.exp(prediction[:, :, 2:4]) * anchors
 
         # Softmax the class scores ps: Now change it to sigmoid
-        prediction[:, :, 5: 5 + self.num_classes] = torch.sigmoid((prediction[:, :, 5: 5 + self.num_classes]))
+        prediction[..., 5: 5 + self.num_classes] = torch.sigmoid((prediction[:, :, 5: 5 + self.num_classes]))
 
-        prediction[:, :, :4] *= stride
+        # Add offset and scale with anchors
+        pred_bbox = prediction[..., :4].view(batch_size, self.num_anchors,grid_size,grid_size,4)
 
         # train
         if target is not None:
-            pred_bbox = prediction[..., :4]
             nGT, nCorrect, mask, conf_mask, tx, ty, tw, th, tconf, tcls = build_targets(pred_bbox.cpu().data,
                                                                                         target.cpu().data,
-                                                                                        self,
+                                                                                        scale_anchors,
                                                                                         self.num_anchors,
                                                                                         self.num_classes,
                                                                                         grid_size,
@@ -157,13 +163,14 @@ class YOLOLayer(nn.Module):
 
             recall = float(nCorrect / nGT) if nGT else 1
             mask = torch.FloatTensor(mask).to(self.device)
-            cls_mask = torch.FloatTensor(mask.unsqueeze(-1).repeat(1, 1, 1, 1, self.num_classes)).to(self.device)
+            conf_mask = conf_mask.to(self.device)
+            cls_mask = mask.unsqueeze(-1).repeat(1, 1, 1, 1, self.num_classes).to(self.device)
 
             # Handle target variables
             tx = torch.FloatTensor(tx).to(self.device)
             ty = torch.FloatTensor(ty).to(self.device)
             tw = torch.FloatTensor(tw).to(self.device)
-            th = torch.FloatTensor(mask).to(self.device)
+            th = torch.FloatTensor(th).to(self.device)
             tconf = torch.FloatTensor(tconf).to(self.device)
             tcls = torch.FloatTensor(tcls).to(self.device)
 
@@ -180,6 +187,7 @@ class YOLOLayer(nn.Module):
 
         # test
         else:
+            prediction[..., :4] *= stride
             return prediction
 
 class Darknet(nn.Module):
@@ -221,7 +229,7 @@ class Darknet(nn.Module):
 
         self.losses['recall'] /= 3
         return sum(output) if is_training else torch.cat(output, 1)
-    
+
     def load_weights(self, weights_path):
         """Parses and loads the weights stored in 'weights_path'"""
 
@@ -296,6 +304,7 @@ class Darknet(nn.Module):
                 conv_layer.weight.data.cpu().numpy().tofile(fp)
 
         fp.close()
+
 # model = Darknet('config/yolov3.cfg')
 # # model = Darknet("cfg/yolov3.cfg")
 # input = torch.sigmoid(torch.rand(1, 3, 416, 416).float())
@@ -303,3 +312,4 @@ class Darknet(nn.Module):
 # # model.net_info["height"] = 416
 # predictions = model(input)
 # print(predictions.shape)
+# # print(predictions.shape)
