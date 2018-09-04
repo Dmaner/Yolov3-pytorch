@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from function import build_targets
+from function import *
 from collections import defaultdict
 def read_cfg(cfgfile):
     """Parses the yolo-v3 layer configuration file and returns module definitions"""
@@ -26,7 +26,7 @@ def read_cfg(cfgfile):
 def create_modules(module_defs):
     """
         Constructs module list of layer blocks from module configuration in module_defs
-    """
+        """
     hyperparams = module_defs.pop(0)
     output_filters = [int(hyperparams['channels'])]
     module_list = nn.ModuleList()
@@ -82,7 +82,7 @@ def create_modules(module_defs):
 
 class EmptyLayer(nn.Module):
     """
-    prepare for shortcut layer / route layer
+    为shortcut layer / route layer 准备, 具体功能不在此实现
     """
     def __init__(self):
         super(EmptyLayer, self).__init__()
@@ -108,9 +108,9 @@ class YOLOLayer(nn.Module):
         stride = self.img_size/grid_size
         self.device = torch.device('cuda' if prediction.is_cuda else 'cpu')
 
-        scale_anchors = [(a[0] / stride, a[1] / stride) for a in self.anchors]
+        scaled_anchors = [(a[0] / stride, a[1] / stride) for a in self.anchors]
 
-        # I don't know the usage of contiguous()
+        # [bs, num_anchors, grid_size, grid_size, bbox_attrs]
         prediction = prediction.view(batch_size,
                                      self.num_anchors,
                                      self.bbox_attrs,
@@ -125,37 +125,32 @@ class YOLOLayer(nn.Module):
         conf = torch.sigmoid(prediction[..., 4])  # Conf
         pred_cls = torch.sigmoid(prediction[..., 5:])  # Cls pred.
 
-        prediction = prediction.view(batch_size,
-                                     self.num_anchors*grid_size*grid_size,
-                                     self.bbox_attrs)
 
-        # Add center offset
+        # # Add center offset
         grid_len = np.arange(grid_size)
         a,b = np.meshgrid(grid_len,grid_len)
 
-        x_offset = torch.FloatTensor(a).view(-1, 1).to(self.device)
-        y_offset = torch.FloatTensor(b).view(-1, 1).to(self.device)
+        x_offset = torch.FloatTensor(a).repeat(batch_size*self.num_anchors, 1, 1).view(Centerx.shape).to(self.device)
+        y_offset = torch.FloatTensor(b).repeat(batch_size*self.num_anchors, 1, 1).view(Centerx.shape).to(self.device)
 
-        x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1, self.num_anchors).view(-1, 2).unsqueeze(0)
-        prediction[..., :2] += x_y_offset
-
-        # log space transform height and the width
-        anchors = torch.FloatTensor(scale_anchors).to(self.device)
-
-        anchors = anchors.repeat(grid_size * grid_size, 1).unsqueeze(0)
-        prediction[..., 2:4] = torch.exp(prediction[:, :, 2:4]) * anchors
-
-        # Softmax the class scores ps: Now change it to sigmoid
-        prediction[..., 5: 5 + self.num_classes] = torch.sigmoid((prediction[:, :, 5: 5 + self.num_classes]))
+        # # log space transform height and the width
+        anchor_w = torch.FloatTensor(scaled_anchors).index_select(1, torch.LongTensor([0]))
+        anchor_h = torch.FloatTensor(scaled_anchors).index_select(1, torch.LongTensor([1]))
+        anchor_w = anchor_w.repeat(batch_size, 1).repeat(1, 1,grid_size * grid_size).view(w.shape).to(self.device)
+        anchor_h = anchor_h.repeat(batch_size, 1).repeat(1, 1, grid_size * grid_size).view(h.shape).to(self.device)
 
         # Add offset and scale with anchors
-        pred_bbox = prediction[..., :4].view(batch_size, self.num_anchors,grid_size,grid_size,4)
+        pred_bbox = torch.FloatTensor(prediction[..., :4].shape).to(self.device)
+        pred_bbox[..., 0] = Centerx.data + x_offset
+        pred_bbox[..., 1] = Centery.data + y_offset
+        pred_bbox[..., 2] = torch.exp(w.data) * anchor_w
+        pred_bbox[..., 3] = torch.exp(h.data) * anchor_h
 
         # train
         if target is not None:
             nGT, nCorrect, mask, conf_mask, tx, ty, tw, th, tconf, tcls = build_targets(pred_bbox.cpu().data,
                                                                                         target.cpu().data,
-                                                                                        scale_anchors,
+                                                                                        scaled_anchors,
                                                                                         self.num_anchors,
                                                                                         self.num_classes,
                                                                                         grid_size,
@@ -187,7 +182,9 @@ class YOLOLayer(nn.Module):
 
         # test
         else:
-            prediction[..., :4] *= stride
+            prediction = torch.cat((pred_bbox.view(batch_size, -1, 4) * stride,
+                                conf.view(batch_size, -1, 1),
+                                pred_cls.view(batch_size, -1, self.num_classes)), -1)
             return prediction
 
 class Darknet(nn.Module):
@@ -306,7 +303,9 @@ class Darknet(nn.Module):
         fp.close()
 
 # model = Darknet('config/yolov3.cfg')
+# # model = Darknet("cfg/yolov3.cfg")
 # input = torch.sigmoid(torch.rand(1, 3, 416, 416).float())
+# # # 网络输入数据大小
 # # model.net_info["height"] = 416
 # predictions = model(input)
 # print(predictions.shape)
